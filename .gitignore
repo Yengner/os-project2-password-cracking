@@ -1,0 +1,13 @@
+# Build and sample test output
+/src/project2
+/src/output.txt
+*.o
+*.out
+
+# Local benchmark, submission artifacts, and editors
+/dist/
+*.log
+.DS_Store
+.vscode/
+.idea/
+*~
