@@ -1,102 +1,76 @@
-# Operating Systems — Project 2: Password Cracking
+# Project 2 — Two-part implementation and handoff
 
-**Course:** Operating Systems · **Team:** 3 people · **Language:** C · **Status:** Planning / baseline verified
+**Only the first half is implemented. This is not the finished project.** The current code runs in one thread. The second half must add pthreads, tune performance, and complete final testing before submission. This splits implementation between the two active contributors; the assignment's group-size requirements still apply.
 
-> **Public repository configuration requested by the team.** The instructor warns against sharing project code; keeping this repository public when you add your optimized solution may create academic-integrity risk. Make it private if required. Never commit another group's code or hidden Gradescope datasets.
+## Work split
 
-## Goal
+| Owner | Work | Status |
+| --- | --- | --- |
+| Me — first half | Target loading, hash lookup table, duplicate handling, ordered matching, output, cleanup, and helper functions for the threading handoff in `src/hash.c`. Provide the local test script. | Implemented; locally checked against the starter. |
+| Teammate — second half | Replace the serial password loop with a fixed pthread pool and bounded batches, preserve result order, tune performance, run the local Gradescope checks and all supplied course datasets on Linux, fill in author details, and prepare/submit the final ZIP. | Still to do. |
 
-Speed up the provided password-hash matching tool **without changing its output**. The program reads candidate passwords and target hashes, tries MD5, SHA1, SHA256, and SHA512, and writes the matching password and algorithm or `not found` for each target.
+Everyone contributing should review the final code and explain their work in the video. Peer reviews remain individual submissions.
 
-Only **`src/hash.c`** may be changed among the starter files. Do not edit `main.c`, `hash.h`, `hash_functions.c`, `hash_functions.h`, or `Makefile`, and do not change compiler flags or use nonstandard libraries. Pthreads, semaphores, and standard C libraries are permitted. **At most 12 simultaneous threads including the main thread** are allowed; design for **up to 11 worker threads**, but benchmark approximately 3–4 workers on the grading machine's four CPU cores.
-
-## Quick start (Ubuntu/Linux)
-
-```bash
-sudo apt update
-sudo apt install -y build-essential libssl-dev zip unzip
-cd src
-make
-make test
-```
-
-`make test` runs the supplied sample and compares its output against `src/data/expected.txt`. To run with custom files:
-
-```bash
-./project2 path/to/passwords.txt path/to/hashes.txt output.txt
-```
-
-The executable prints runtime (seconds) to standard output; matching results go to the output file. The supplied baseline passed locally before any optimization; it took **4.047 s** on a Debian/GCC 14.2 environment. This is **not** the Gradescope reference time and should not be treated as a score prediction.
-
-## Repository map
+## Architecture: what exists and what to add
 
 ```text
-starter/project2-original.zip # Unmodified instructor starter package
-src/                       # PROVIDED STARTER — edit only hash.c
-  hash.c                    # Only permitted implementation change
-  main.c, hash.h, ...       # Protected starter files
-  Makefile
-  data/                     # Starter sample inputs and expected output
-.github/workflows/ci.yml   # Linux build + supplied test
-.github/ISSUE_TEMPLATE/     # Task/bug templates
-scripts/benchmark.sh       # Repeatable local correctness + runtime runs
-scripts/create_github_repo.sh # Creates public repo and pushes the files
-scripts/create_github_issues.sh # Creates the 7 initial teamwork issues
-scripts/package_submission.sh  # Produce dist/project2.zip with src/ only
-docs/REQUIREMENTS.md        # Assignment rules and grading
-docs/ARCHITECTURE.md       # Baseline analysis and safe optimization ideas
-docs/TEAM_PLAN.md          # Three-person tasks, phases, integration order
-docs/TESTING.md            # Test matrix and benchmark protocol
-docs/ISSUE_BACKLOG.md      # Issues to create and claim
-docs/VIDEO_AND_SUBMISSION.md # Video, peer reviews, ZIP checklist
-docs/DECISION_LOG.md       # Record architecture decisions
-docs/WORK_LOG.md           # Evidence of each member's contributions
+Current first half:
+load_targets → read one password → compute_password_hashes
+             → apply_password_hashes → repeat → write_results → cleanup
+
+Teammate's second half:
+load_targets → read a bounded batch in password order
+             → fixed workers run compute_password_hashes on separate slots
+             → main waits for completion
+             → main runs apply_password_hashes in password order
+             → reuse batch → repeat → stop/join workers → output and cleanup
 ```
 
-## How we collaborate
+Implemented in `src/hash.c`:
 
-1. Pick a team lead, join the correct **Canvas Project 2** group, and enter names/NetIDs in `docs/TEAM_PLAN.md` and the comment header of `src/hash.c` before submission.
-2. Open the initial GitHub issues from `docs/ISSUE_BACKLOG.md`; assign one primary owner per issue and include a reviewer.
-3. Work on short `feature/...` or `test/...` branches. **Do not push implementation directly to `main`**.
-4. Because all allowed implementation work is in **one file**, coordinate `hash.c` edits and merge in the order described in `docs/TEAM_PLAN.md`. Documentation and benchmark work can happen in parallel.
-5. Each pull request must pass `make test`, state its runtime, disclose changed files, and be reviewed by another teammate.
-6. When integrating, verify exact output on all available datasets, benchmark multiple times, and package from a clean working tree.
+- `load_targets`: stores output rows in original order and builds a chained hash table. Reverse insertion preserves the input order of duplicate targets. Hash collisions use full-key comparisons.
+- `compute_password_hashes`: computes MD5, SHA1, SHA256, and SHA512 for one password, keeps the first 16 bytes as 32 lowercase hex characters, and frees the returned digest buffers. It has no shared mutable state; each worker must receive its own output slot.
+- `apply_password_hashes`: looks up matching targets without scanning the entire target list. It assigns and removes only the first unmatched row per digest event, preserving the starter's duplicate behavior. **Call this only from the main thread, in password input order.** It processes algorithms in MD5 → SHA1 → SHA256 → SHA512 order.
+- `write_results` and cleanup: preserve target row order, `password:ALGORITHM` output, and `not found` lines, and free row/table allocations.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for commands and review rules.
+The marked serial loop in `crack_hashed_passwords` is the integration point. Reading and computing hashes currently happen sequentially; pthreads have not been added.
 
-## Progress checkpoints
+## Handoff for the teammate or their AI agent
 
-- [x] Original starter package inspected
-- [x] Original code compiled and passed starter test
-- [ ] Team roster and GitHub access confirmed
-- [ ] Baseline independently verified by every teammate
-- [ ] Matching lookup optimization integrated and reviewed
-- [ ] Worker parallelism integrated and reviewed
-- [ ] Correctness and deterministic result handling validated
-- [ ] Repeated benchmarks and tuning complete
-- [ ] Authors/NetIDs and meaningful comments in `hash.c`
-- [ ] Final `project2.zip` prepared, reviewed, and submitted
-- [ ] Group presentation uploaded to Canvas
-- [ ] Peer reviews completed
+Use this as the remaining task:
 
-## Important assignment targets
+> Complete only the second half of this repository's Project 2. Read `src/hash.c` and keep its indexed lookup and ordered duplicate matching. Replace the marked serial password loop with bounded batches and a fixed pthread pool. Each batch slot must retain its password and its four computed hashes. Workers call `compute_password_hashes` using private slots. The main thread must wait until the batch is complete, then call `apply_password_hashes` for each slot in original password order before reusing batch storage. Use mutexes/condition variables or semaphores for work handoff and completion; handle partial thread creation, shutdown, joins, and cleanup without hangs or races. Start with 3 workers plus main, benchmark 4 workers too, and never exceed 12 total simultaneous threads, including main. Keep memory bounded for large inputs. Preserve whitespace-separated input, passwords up to 255 characters, all four algorithms, duplicate behavior, and exact output. Do not replace deterministic input order with worker completion order. Only change `src/hash.c` among starter source/build files; keep the Makefile, compiler flags, `main.c`, both headers, and `hash_functions.c` unchanged. Use permitted pthread/semaphore and standard C facilities. Fill in real group/authors/NetIDs at the top of `hash.c` and retain meaningful comments. Run the tests below on Ubuntu 22.04/GCC 11.4, add thread/batch boundary and repeated-run checks, test every available course dataset, and benchmark before packaging. Report actual results and remaining limitations; do not claim Gradescope success until the real submission returns results.
 
-- **Code:** 60 points (50 speed, 10 style). Full speed credit at **4.3×** the reference; no speed points at or below **1×**.
-- **Video:** 30 points; **8–12 minutes hard limit**, ideally roughly **9–10 minutes**, directly uploaded to Canvas, file **under 200 MB**.
-- **Peer reviews:** separate required submission.
-- **Submission:** `project2.zip` containing `src/` and an unchanged Makefile that builds executable `project2` on Ubuntu 22.04.3/GCC 11.4.
+## Teammate's final testing and submission
 
-The project due date is not in the provided description. The team leader should confirm all **three Canvas deadlines** and add them to the project issues.
-
-## Creating the public GitHub repository
-
-The repository package is prepared but **has not been created on GitHub**. On your computer, after extracting the ZIP:
+On Linux with Python 3, make, GCC, and OpenSSL development headers available, run from the repository:
 
 ```bash
-brew install gh                  # macOS; skip if already installed
-gh auth login
-./scripts/create_github_repo.sh
-./scripts/create_github_issues.sh   # optional: add the seven teamwork issues
+python3 scripts/test_gradescope.py
 ```
 
-That script creates **`Yengner/os-project2-password-cracking` as a public repository** and pushes all included files (including the original starter archive). Alternatively, create an **empty public** repo at https://github.com/new with that name and push the extracted folder manually. In GitHub, open **Settings → Collaborators and teams → Add people** to invite your two teammates by their GitHub usernames. **Academic integrity:** Your instructions say not to share code; consider making the repository private before any original solution work is pushed.
+The default starter archive is `starter/project2-original.zip`, identical to the provided `project2-1.zip`. To use another copy explicitly:
+
+```bash
+python3 scripts/test_gradescope.py --starter /path/to/project2-1.zip
+```
+
+The script checks that protected files are unchanged, builds original and current code with their unchanged Makefiles, rejects compiler warnings, and compares output byte-for-byte. It runs the sample plus 10 generated cases, with three current-code runs each. Cases cover all algorithms, misses, duplicate passwords/hashes, input order, whitespace, 255-character passwords, and an empty password list. It also builds and runs a freshly extracted submission ZIP. Temporary builds leave `src/` untouched.
+
+The provided ZIP contains one sample dataset, not the separate course “all test cases” archive. Download those course cases and test each password/hash pair with this repeatable option:
+
+```bash
+python3 scripts/test_gradescope.py --case /path/to/passwords.txt /path/to/hashes.txt
+```
+
+After all checks pass, the script creates `dist/project2.zip` with `src/` and the six required source/build files. **A ZIP created now contains only the first half; do not submit it as the completed project.** Regenerate it after threading and final testing. The script does not enforce the runtime thread cap, prove race freedom, audit permitted libraries, or reproduce the Gradescope score.
+
+Before submitting, the teammate must:
+
+- Verify the final code on Ubuntu 22.04.3/GCC 11.4, targeting the grader's 4 CPU cores and 6 GB RAM. Repeat original/final timings on identical inputs; local sample speed is not the Gradescope speed factor.
+- Test batch boundaries, repeated matching passwords across batches, repeated invocations, thread shutdown, and failure paths. Inspect for races and confirm at most 12 total threads.
+- Fill in group/authors/NetIDs and review comments and indentation. Only `hash.c` may differ from the supplied source/build files.
+- Regenerate and upload `dist/project2.zip`, list contributing group members in Gradescope, and review the actual grader results. Full speed credit requires 4.3× the reference speed; correctness alone does not earn speed points.
+- Complete the separate video and peer-review requirements using their assignment instructions.
+
+First-half checks passed locally on macOS against the starter; Linux verification and final threaded-code testing belong to the second half. Local checks cannot guarantee a Gradescope score.
